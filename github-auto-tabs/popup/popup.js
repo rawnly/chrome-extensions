@@ -9,7 +9,7 @@ const errorEl = document.getElementById("error");
 // Load current state
 chrome.runtime.sendMessage({ type: "get-status" }, (data) => {
   if (!data) return;
-  if (data.pat) patInput.value = data.pat;
+  if (data.hasPat) patInput.placeholder = data.patMasked || "••••••••";
   if (data.interval) intervalSelect.value = String(data.interval);
   if (data.prCount != null) prCountEl.textContent = data.prCount;
   if (data.lastPoll) lastPollEl.textContent = formatTime(data.lastPoll);
@@ -22,11 +22,34 @@ chrome.runtime.sendMessage({ type: "get-status" }, (data) => {
 saveBtn.addEventListener("click", () => {
   const pat = patInput.value.trim();
   const interval = Number(intervalSelect.value);
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = pat ? "Validating..." : "Saving...";
+  errorEl.hidden = true;
+
   chrome.runtime.sendMessage(
     { type: "save-settings", settings: { pat, interval } },
-    () => {
-      saveBtn.textContent = "Saved!";
-      setTimeout(() => (saveBtn.textContent = "Save"), 1500);
+    (res) => {
+      saveBtn.disabled = false;
+      if (!res) {
+        saveBtn.textContent = "Save";
+        return;
+      }
+      if (res.ok) {
+        const label = res.username
+          ? `Saved! (@${res.username})`
+          : "Saved!";
+        saveBtn.textContent = label;
+        if (pat) {
+          patInput.value = "";
+          patInput.placeholder = pat.slice(0, 4) + "••••" + pat.slice(-4);
+        }
+        setTimeout(() => (saveBtn.textContent = "Save"), 2000);
+      } else {
+        saveBtn.textContent = "Save";
+        errorEl.textContent = res.error;
+        errorEl.hidden = false;
+      }
     }
   );
 });
@@ -37,7 +60,6 @@ pollBtn.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "poll-now" }, () => {
     pollBtn.disabled = false;
     pollBtn.textContent = "Poll Now";
-    // Refresh status
     chrome.runtime.sendMessage({ type: "get-status" }, (data) => {
       if (!data) return;
       if (data.prCount != null) prCountEl.textContent = data.prCount;
