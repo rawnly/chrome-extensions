@@ -1,4 +1,4 @@
-# GitHub Auto Tabs
+# PR Patrol
 
 A Chrome extension that automatically manages a tab group for GitHub pull requests awaiting your review. It polls the GitHub Search API on a configurable interval and keeps a "Reviews" tab group in sync — opening new tabs for incoming PRs and closing tabs for PRs you've already reviewed.
 
@@ -17,7 +17,7 @@ A Chrome extension that automatically manages a tab group for GitHub pull reques
 2. **Install the extension**
    - Open `chrome://extensions`
    - Enable **Developer mode**
-   - Click **Load unpacked** and select the `github-auto-tabs` directory
+   - Click **Load unpacked** and select the `pr-patrol` directory
 3. **Configure** — click the extension icon, paste your PAT, choose a poll interval, and hit Save
 
 ## How it works

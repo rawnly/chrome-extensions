@@ -1,4 +1,4 @@
-# Security — GitHub Auto Tabs
+# Security — PR Patrol
 
 ## Threat model
 

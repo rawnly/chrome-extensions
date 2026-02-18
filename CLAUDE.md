@@ -9,7 +9,7 @@ A collection of independent Chrome extensions (Manifest V3), each in its own dir
 ## Extensions
 
 - **cleanup_web** — Hide distracting elements from webpages via point-and-click selector picker
-- **github-auto-tabs** — Auto-manage a tab group for GitHub PRs awaiting your review (alarm-based polling)
+- **pr-patrol (PR Patrol)** — Auto-manage a tab group for GitHub PRs awaiting your review (alarm-based polling)
 - **redirecto** — Declarative URL redirect rules (no runtime code, purely `declarativeNetRequest`)
 
 ## Development
@@ -39,11 +39,13 @@ After editing files, click the reload button on the extension card (or Ctrl+R on
 Three-layer architecture: **popup** (UI) → **background** (service worker hub) → **content scripts** (page manipulation).
 
 - `content/cleaner.js` is always injected (`document_idle` via manifest) — applies stored hide rules and watches for dynamic content via `MutationObserver`
-- `content/picker.js` is injected on-demand via `chrome.scripting.executeScript` when the user enters pick mode — generates CSS selectors (ID → class combo → nth-of-type path) and stores them under the hostname key in `chrome.storage.local`
+- `content/picker.js` is injected on-demand via `chrome.scripting.executeScript` when the user enters pick mode — generates CSS selectors (ID → class combo → nth-of-type path) and stores them under the hostname key in `chrome.storage.local`; `content/picker.css` provides the overlay/highlight styles
 - `background.js` is a pure message router — coordinates popup↔content and manages badge counts
 - Storage shape: `{ rules: { "example.com": [{ selector, created }] } }`
 
-### github-auto-tabs
+Message types: `start-picker`, `stop-picker`, `picker-closed`, `rule-added`, `hidden-count`, `clear-rules` (async), `get-rules-count` (async), `rules-cleared` (background→content)
+
+### pr-patrol (PR Patrol)
 
 Single service worker with four subsystems:
 
@@ -52,7 +54,11 @@ Single service worker with four subsystems:
 3. **Tab reconciliation** — maintains a "Reviews" tab group; opens/closes tabs to match current review queue; validates PR URLs against strict regex
 4. **Settings** — interval allowlist `[1, 5, 10, 30]`, encrypted PAT storage, migration from legacy plaintext format
 
+Message types: `poll-now` (async), `save-settings` (async, payload `{ settings: { pat, interval } }`), `get-status` (async)
+
 Storage keys: `patEncrypted` (object with salt/iv/ciphertext), `interval`, `groupId`, `lastPoll`, `lastError`, `prCount`
+
+Gotcha: `getOrCreateGroup()` returns `null` both when there are no PRs (group removed) **and** after creating a brand-new group (tabs already opened inline). Only a pre-existing valid group returns a non-null ID for further reconciliation.
 
 ### redirecto
 
