@@ -1,0 +1,79 @@
+/* Cleanup Web - Picker overlay styles */
+
+.cw-overlay {
+  position: fixed;
+  pointer-events: none;
+  border: 2px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+  z-index: 2147483647;
+  transition: top 0.05s ease, left 0.05s ease, width 0.05s ease, height 0.05s ease;
+  border-radius: 2px;
+}
+
+.cw-overlay-label {
+  position: absolute;
+  bottom: 100%;
+  left: -2px;
+  background: #3b82f6;
+  color: #fff;
+  font: 11px/1.4 system-ui, -apple-system, sans-serif;
+  padding: 2px 6px;
+  border-radius: 3px 3px 0 0;
+  white-space: nowrap;
+  pointer-events: none;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cw-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  background: #1e293b;
+  color: #f1f5f9;
+  font: 13px/1.4 system-ui, -apple-system, sans-serif;
+  padding: 8px 16px;
+  border-radius: 8px;
+  z-index: 2147483647;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.cw-toast.cw-toast--visible {
+  opacity: 1;
+}
+
+.cw-toast.cw-toast--exit {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+
+@keyframes cw-shrink-remove {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.95);
+    height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+}
+
+.cw-removing {
+  animation: cw-shrink-remove 0.25s ease forwards;
+  pointer-events: none !important;
+}
+
+/* Cursor override when picker is active */
+.cw-picker-active,
+.cw-picker-active * {
+  cursor: crosshair !important;
+}

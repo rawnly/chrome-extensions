@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 260px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      padding: 16px;
+      background: #fff;
+      color: #1e293b;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #1e293b;
+        color: #e2e8f0;
+      }
+      .btn {
+        background: #334155;
+        color: #e2e8f0;
+        border-color: #475569;
+      }
+      .btn:hover {
+        background: #475569;
+      }
+      .btn--primary {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #fff;
+      }
+      .btn--primary:hover {
+        background: #2563eb;
+      }
+      .btn--danger {
+        background: #dc2626;
+        border-color: #dc2626;
+        color: #fff;
+      }
+      .status {
+        color: #94a3b8;
+      }
+    }
+
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .status {
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 12px;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: #f8fafc;
+      color: #1e293b;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.15s;
+    }
+
+    .btn:hover {
+      background: #e2e8f0;
+    }
+
+    .btn + .btn {
+      margin-top: 8px;
+    }
+
+    .btn--primary {
+      background: #3b82f6;
+      border-color: #3b82f6;
+      color: #fff;
+    }
+
+    .btn--primary:hover {
+      background: #2563eb;
+    }
+
+    .btn--danger {
+      background: transparent;
+      border-color: #fca5a5;
+      color: #dc2626;
+      font-size: 12px;
+    }
+
+    .btn--danger:hover {
+      background: #fef2f2;
+    }
+  </style>
+</head>
+<body>
+  <h1>Cleanup Web</h1>
+  <p class="status" id="status">Loading...</p>
+  <button class="btn btn--primary" id="toggle">Start picking</button>
+  <button class="btn btn--danger" id="clear" style="display:none">Reset rules for this site</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>
