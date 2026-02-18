@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 280px;
+      padding: 16px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      color: #1e293b;
+      background: #fff;
+    }
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .section {
+      margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 4px;
+    }
+    .status-row .value { color: #1e293b; font-weight: 500; }
+    .error { color: #dc2626; font-size: 12px; margin-top: 4px; }
+    label {
+      display: block;
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 4px;
+    }
+    input, select {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 13px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      background: #f8fafc;
+      color: #1e293b;
+      margin-bottom: 8px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: #3b82f6;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      background: #f8fafc;
+      color: #1e293b;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #e2e8f0; }
+    .btn--primary {
+      background: #3b82f6;
+      color: #fff;
+      border-color: #3b82f6;
+    }
+    .btn--primary:hover { background: #2563eb; }
+    .btn + .btn { margin-top: 8px; }
+
+    @media (prefers-color-scheme: dark) {
+      body { background: #1e293b; color: #e2e8f0; }
+      .status-row { color: #94a3b8; }
+      .status-row .value { color: #e2e8f0; }
+      .section-title { color: #94a3b8; }
+      label { color: #94a3b8; }
+      input, select {
+        background: #334155;
+        border-color: #475569;
+        color: #e2e8f0;
+      }
+      .btn {
+        background: #334155;
+        border-color: #475569;
+        color: #e2e8f0;
+      }
+      .btn:hover { background: #475569; }
+    }
+  </style>
+</head>
+<body>
+  <h1>GitHub Auto Tabs</h1>
+
+  <div class="section">
+    <div class="section-title">Status</div>
+    <div class="status-row">
+      <span>PRs awaiting review</span>
+      <span class="value" id="pr-count">—</span>
+    </div>
+    <div class="status-row">
+      <span>Last poll</span>
+      <span class="value" id="last-poll">never</span>
+    </div>
+    <div id="error" class="error" hidden></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Settings</div>
+    <label for="pat">Personal Access Token</label>
+    <input type="password" id="pat" placeholder="ghp_...">
+    <label for="interval">Poll interval</label>
+    <select id="interval">
+      <option value="1">1 minute</option>
+      <option value="5" selected>5 minutes</option>
+      <option value="10">10 minutes</option>
+      <option value="30">30 minutes</option>
+    </select>
+  </div>
+
+  <button class="btn btn--primary" id="save-btn">Save</button>
+  <button class="btn" id="poll-btn">Poll Now</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>
