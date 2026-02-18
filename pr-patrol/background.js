@@ -5,7 +5,31 @@ const DEFAULT_INTERVAL = 5;
 const VALID_INTERVALS = [1, 5, 10, 30];
 const PR_URL_PATTERN = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
 
+const groupKeys = {
+  review: "review",
+  ready: "ready",
+};
+
+const groups = {
+  [groupKeys.review]: {
+    title: "Reviews",
+    color: "blue",
+  },
+  [groupKeys.ready]: {
+    title: "Ready to Merge",
+    color: "green",
+  },
+};
+
 let backoffUntil = 0;
+
+/**
+ * @typedef {Object} IssueTab
+ * @property {string} title
+ * @property {string} url
+ * @property {number} number
+ *
+ */
 
 // --- Crypto helpers (AES-256-GCM via Web Crypto) ---
 
@@ -16,14 +40,14 @@ async function deriveKey(salt) {
     encoder.encode(chrome.runtime.id),
     "PBKDF2",
     false,
-    ["deriveKey"]
+    ["deriveKey"],
   );
   return crypto.subtle.deriveKey(
     { name: "PBKDF2", salt, iterations: 100_000, hash: "SHA-256" },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
-    ["encrypt", "decrypt"]
+    ["encrypt", "decrypt"],
   );
 }
 
@@ -34,7 +58,7 @@ async function encryptPat(pat) {
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    new TextEncoder().encode(pat)
+    new TextEncoder().encode(pat),
   );
   return {
     salt: btoa(String.fromCharCode(...salt)),
@@ -47,13 +71,13 @@ async function decryptPat(envelope) {
   const salt = Uint8Array.from(atob(envelope.salt), (c) => c.charCodeAt(0));
   const iv = Uint8Array.from(atob(envelope.iv), (c) => c.charCodeAt(0));
   const ciphertext = Uint8Array.from(atob(envelope.ciphertext), (c) =>
-    c.charCodeAt(0)
+    c.charCodeAt(0),
   );
   const key = await deriveKey(salt);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv },
     key,
-    ciphertext
+    ciphertext,
   );
   return new TextDecoder().decode(plaintext);
 }
@@ -180,6 +204,7 @@ async function handleGetStatus() {
     "lastPoll",
     "lastError",
     "prCount",
+    "readyToMergeCount",
   ]);
   const pat = await getStoredPat();
   return {
@@ -189,6 +214,7 @@ async function handleGetStatus() {
     lastPoll: data.lastPoll,
     lastError: data.lastError,
     prCount: data.prCount,
+    readyToMergeCount: data.readyToMergeCount,
   };
 }
 
@@ -209,14 +235,31 @@ async function pollAndReconcile() {
   if (Date.now() < backoffUntil) return;
 
   const pat = await getStoredPat();
+
   if (!pat) {
     updateBadge("");
     return;
   }
 
-  let prs;
   try {
-    prs = await fetchReviewRequests(pat);
+    const pendingReviews = await fetchReviewRequests(pat);
+    const readyToMerge = await fetchReadyToMerge(pat);
+
+    backoffUntil = 0;
+
+    await chrome.storage.local.set({
+      lastError: null,
+      lastPoll: Date.now(),
+      prCount: pendingReviews.length,
+      readyToMergeCount: readyToMerge.length,
+    });
+
+    await reconcileTabs(pendingReviews, groupKeys.review);
+    await reconcileTabs(readyToMerge, groupKeys.ready);
+
+    const badgeCounter = readyToMerge.length + pendingReviews.length;
+
+    updateBadge(badgeCounter > 0 ? String(alLCount) : "");
   } catch (err) {
     await chrome.storage.local.set({
       lastError: err.message,
@@ -224,22 +267,33 @@ async function pollAndReconcile() {
     });
     return;
   }
-
-  backoffUntil = 0;
-
-  await chrome.storage.local.set({
-    lastError: null,
-    lastPoll: Date.now(),
-    prCount: prs.length,
-  });
-
-  await reconcileTabs(prs);
-  updateBadge(prs.length > 0 ? String(prs.length) : "");
 }
 
+/**
+ * @param pat {String}
+ */
 async function fetchReviewRequests(pat) {
-  const url =
-    "https://api.github.com/search/issues?q=is:pr+is:open+review-requested:@me&per_page=50";
+  return fetchIssues(pat, "is:pr+is:open+review-requested:@me");
+}
+
+async function fetchReadyToMerge(pat) {
+  return fetchIssues(pat, "is:pr+is:open+author:@me+review:approved");
+}
+
+/**
+ * @param pat {String}
+ */
+async function fetchPending(pat) {
+  return fetchIssues(pat, "");
+}
+
+/**
+ * @param pat {String}
+ * @param filter {String}
+ * @returns {Promise<IssueTab[]>}
+ */
+async function fetchIssues(pat, filter) {
+  const url = `https://api.github.com/search/issues?q=${filter}&per_page=50`;
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${pat}`,
@@ -276,14 +330,22 @@ async function fetchReviewRequests(pat) {
     .filter((pr) => PR_URL_PATTERN.test(pr.url));
 }
 
+/**
+ * @param url {String}
+ * @returns {String}
+ */
 function normalizeUrl(url) {
   return url.replace(/\/+$/, "");
 }
 
 // --- Tab reconciliation ---
 
-async function reconcileTabs(prs) {
-  const groupId = await getOrCreateGroup(prs);
+/**
+ * @param prs {IssueTab[]}
+ * @param prefix {string}
+ */
+async function reconcileTabs(prs, prefix) {
+  const groupId = await getOrCreateGroup(prs, prefix);
   if (groupId === null) return;
 
   const prUrls = new Set(prs.map((pr) => pr.url));
@@ -317,9 +379,16 @@ async function reconcileTabs(prs) {
   }
 }
 
-async function getOrCreateGroup(prs) {
+/**
+ * @param prs {IssueTab[]}
+ *  @param prefix {string}
+ */
+async function getOrCreateGroup(prs, prefix) {
+  const storageKey = `${prefix}:groupId`;
+  const groupOptions = group[prefix];
+
   if (prs.length === 0) {
-    const { groupId } = await chrome.storage.local.get("groupId");
+    const { groupId } = await chrome.storage.local.get(storageKey);
     if (groupId != null) {
       try {
         const allTabs = await chrome.tabs.query({});
@@ -330,12 +399,13 @@ async function getOrCreateGroup(prs) {
       } catch {
         // group already gone
       }
-      await chrome.storage.local.remove("groupId");
+
+      await chrome.storage.local.remove(storageKey);
     }
     return null;
   }
 
-  const { groupId } = await chrome.storage.local.get("groupId");
+  const { groupId } = await chrome.storage.local.get(storageKey);
 
   if (groupId != null) {
     try {
@@ -352,8 +422,8 @@ async function getOrCreateGroup(prs) {
   });
   const newGroupId = await chrome.tabs.group({ tabIds: [firstTab.id] });
   await chrome.tabGroups.update(newGroupId, {
-    title: GROUP_TITLE,
-    color: GROUP_COLOR,
+    title: groupOptions.title,
+    color: groupOptions.color,
   });
 
   if (prs.length > 1) {
@@ -372,6 +442,9 @@ async function getOrCreateGroup(prs) {
   return null;
 }
 
+/**
+ * @param {string} text
+ */
 function updateBadge(text) {
   chrome.action.setBadgeText({ text });
   chrome.action.setBadgeBackgroundColor({ color: "#3b82f6" });
