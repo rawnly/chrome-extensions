@@ -36,9 +36,7 @@ saveBtn.addEventListener("click", () => {
         return;
       }
       if (res.ok) {
-        const label = res.username
-          ? `Saved! (@${res.username})`
-          : "Saved!";
+        const label = res.username ? `Saved! (@${res.username})` : "Saved!";
         saveBtn.textContent = label;
         if (pat) {
           patInput.value = "";
@@ -50,7 +48,7 @@ saveBtn.addEventListener("click", () => {
         errorEl.textContent = res.error;
         errorEl.hidden = false;
       }
-    }
+    },
   );
 });
 
