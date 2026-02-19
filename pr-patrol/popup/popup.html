@@ -12,11 +12,26 @@
       color: #1e293b;
       background: #fff;
     }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
     h1 {
       font-size: 14px;
       font-weight: 600;
-      margin-bottom: 12px;
     }
+    .gear-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 2px;
+      color: #64748b;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .gear-btn:hover { color: #1e293b; }
     .section {
       margin-bottom: 14px;
     }
@@ -37,25 +52,48 @@
     }
     .status-row .value { color: #1e293b; font-weight: 500; }
     .error { color: #dc2626; font-size: 12px; margin-top: 4px; }
-    label {
-      display: block;
+    .group-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       font-size: 12px;
-      color: #64748b;
-      margin-bottom: 4px;
+      padding: 4px 0;
     }
-    input, select {
-      width: 100%;
-      padding: 6px 8px;
-      font-size: 13px;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      background: #f8fafc;
+    .color-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .color-dot--grey { background: #9ca3af; }
+    .color-dot--blue { background: #3b82f6; }
+    .color-dot--red { background: #ef4444; }
+    .color-dot--yellow { background: #eab308; }
+    .color-dot--green { background: #22c55e; }
+    .color-dot--pink { background: #ec4899; }
+    .color-dot--purple { background: #a855f7; }
+    .color-dot--cyan { background: #06b6d4; }
+    .group-name {
+      flex: 1;
       color: #1e293b;
-      margin-bottom: 8px;
-      outline: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    input:focus, select:focus {
-      border-color: #3b82f6;
+    .group-count {
+      font-weight: 500;
+      color: #1e293b;
+    }
+    .group-error {
+      color: #dc2626;
+      font-size: 11px;
+      margin-left: 16px;
+      margin-bottom: 2px;
+    }
+    .empty-state {
+      color: #94a3b8;
+      font-size: 12px;
+      font-style: italic;
     }
     .btn {
       display: block;
@@ -77,19 +115,16 @@
       border-color: #3b82f6;
     }
     .btn--primary:hover { background: #2563eb; }
-    .btn + .btn { margin-top: 8px; }
 
     @media (prefers-color-scheme: dark) {
       body { background: #1e293b; color: #e2e8f0; }
+      .gear-btn { color: #94a3b8; }
+      .gear-btn:hover { color: #e2e8f0; }
       .status-row { color: #94a3b8; }
       .status-row .value { color: #e2e8f0; }
       .section-title { color: #94a3b8; }
-      label { color: #94a3b8; }
-      input, select {
-        background: #334155;
-        border-color: #475569;
-        color: #e2e8f0;
-      }
+      .group-name { color: #e2e8f0; }
+      .group-count { color: #e2e8f0; }
       .btn {
         background: #334155;
         border-color: #475569;
@@ -100,14 +135,19 @@
   </style>
 </head>
 <body>
-  <h1>PR Patrol</h1>
+  <div class="header">
+    <h1>PR Patrol</h1>
+    <button class="gear-btn" id="gear-btn" title="Settings">&#9881;</button>
+  </div>
 
   <div class="section">
-    <div class="section-title">Status</div>
-    <div class="status-row">
-      <span>PRs awaiting review</span>
-      <span class="value" id="pr-count">—</span>
+    <div class="section-title">Groups</div>
+    <div id="groups-list">
+      <div class="empty-state">Loading...</div>
     </div>
+  </div>
+
+  <div class="section">
     <div class="status-row">
       <span>Last poll</span>
       <span class="value" id="last-poll">never</span>
@@ -115,21 +155,7 @@
     <div id="error" class="error" hidden></div>
   </div>
 
-  <div class="section">
-    <div class="section-title">Settings</div>
-    <label for="pat">Personal Access Token</label>
-    <input type="password" id="pat" placeholder="ghp_...">
-    <label for="interval">Poll interval</label>
-    <select id="interval">
-      <option value="1">1 minute</option>
-      <option value="5" selected>5 minutes</option>
-      <option value="10">10 minutes</option>
-      <option value="30">30 minutes</option>
-    </select>
-  </div>
-
-  <button class="btn btn--primary" id="save-btn">Save</button>
-  <button class="btn" id="poll-btn">Poll Now</button>
+  <button class="btn btn--primary" id="poll-btn">Poll Now</button>
 
   <script src="popup.js"></script>
 </body>

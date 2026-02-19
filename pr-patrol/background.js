@@ -1,9 +1,23 @@
 const ALARM_NAME = "github-review-poll";
-const GROUP_TITLE = "Reviews";
-const GROUP_COLOR = "blue";
 const DEFAULT_INTERVAL = 5;
 const VALID_INTERVALS = [1, 5, 10, 30];
-const PR_URL_PATTERN = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
+const PR_URL_PATTERN =
+  /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(pull|issue)s?\/\d+$/;
+const CHROME_COLORS = [
+  "grey",
+  "blue",
+  "red",
+  "yellow",
+  "green",
+  "pink",
+  "purple",
+  "cyan",
+];
+const DEFAULT_GROUP = {
+  name: "Reviews",
+  color: "blue",
+  query: "is:pr is:open review-requested:@me",
+};
 
 let backoffUntil = 0;
 
@@ -16,14 +30,14 @@ async function deriveKey(salt) {
     encoder.encode(chrome.runtime.id),
     "PBKDF2",
     false,
-    ["deriveKey"]
+    ["deriveKey"],
   );
   return crypto.subtle.deriveKey(
     { name: "PBKDF2", salt, iterations: 100_000, hash: "SHA-256" },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
-    ["encrypt", "decrypt"]
+    ["encrypt", "decrypt"],
   );
 }
 
@@ -34,7 +48,7 @@ async function encryptPat(pat) {
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    new TextEncoder().encode(pat)
+    new TextEncoder().encode(pat),
   );
   return {
     salt: btoa(String.fromCharCode(...salt)),
@@ -47,13 +61,13 @@ async function decryptPat(envelope) {
   const salt = Uint8Array.from(atob(envelope.salt), (c) => c.charCodeAt(0));
   const iv = Uint8Array.from(atob(envelope.iv), (c) => c.charCodeAt(0));
   const ciphertext = Uint8Array.from(atob(envelope.ciphertext), (c) =>
-    c.charCodeAt(0)
+    c.charCodeAt(0),
   );
   const key = await deriveKey(salt);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv },
     key,
-    ciphertext
+    ciphertext,
   );
   return new TextDecoder().decode(plaintext);
 }
@@ -92,28 +106,58 @@ async function validateToken(pat) {
   return user.login;
 }
 
-// --- Migration: encrypt raw PAT from older versions ---
+// --- Storage helpers ---
 
-async function migrateRawPat() {
-  const { pat, patEncrypted } = await chrome.storage.local.get([
+async function getGroups() {
+  const { groups } = await chrome.storage.local.get("groups");
+  return groups || [];
+}
+
+async function saveGroups(groups) {
+  await chrome.storage.local.set({ groups });
+}
+
+// --- Migration ---
+
+async function migrateStorage() {
+  const data = await chrome.storage.local.get([
     "pat",
     "patEncrypted",
+    "groups",
+    "groupId",
+    "prCount",
+    "lastError",
   ]);
-  if (pat && !patEncrypted) {
-    const envelope = await encryptPat(pat);
+
+  // Step 1: encrypt raw PAT from older versions
+  if (data.pat && !data.patEncrypted) {
+    const envelope = await encryptPat(data.pat);
     await chrome.storage.local.set({ patEncrypted: envelope });
     await chrome.storage.local.remove("pat");
+  }
+
+  // Step 2: migrate flat keys to groups array
+  if (!data.groups) {
+    const defaultGroup = {
+      id: crypto.randomUUID(),
+      ...DEFAULT_GROUP,
+      chromeGroupId: data.groupId ?? null,
+      prCount: data.prCount ?? 0,
+      lastError: data.lastError ?? null,
+    };
+    await chrome.storage.local.set({ groups: [defaultGroup] });
+    await chrome.storage.local.remove(["groupId", "prCount", "lastError"]);
   }
 }
 
 // --- Lifecycle ---
 
 chrome.runtime.onInstalled.addListener(() => {
-  migrateRawPat().then(() => setupAlarm());
+  migrateStorage().then(() => setupAlarm());
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  migrateRawPat().then(() => setupAlarm());
+  migrateStorage().then(() => setupAlarm());
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -139,17 +183,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     handleGetStatus().then(sendResponse);
     return true;
   }
+
+  if (msg.type === "get-groups") {
+    getGroups().then((groups) => sendResponse({ groups }));
+    return true;
+  }
+
+  if (msg.type === "save-groups") {
+    handleSaveGroups(msg.groups).then(sendResponse);
+    return true;
+  }
+
+  if (msg.type === "delete-group") {
+    handleDeleteGroup(msg.groupId).then(sendResponse);
+    return true;
+  }
 });
 
 async function handleSaveSettings(settings) {
   const { pat, interval } = settings || {};
 
-  // Validate interval
   const safeInterval = VALID_INTERVALS.includes(Number(interval))
     ? Number(interval)
     : DEFAULT_INTERVAL;
 
-  // Validate and encrypt PAT if provided
   if (pat && pat.trim()) {
     try {
       const username = await validateToken(pat.trim());
@@ -158,7 +215,6 @@ async function handleSaveSettings(settings) {
         patEncrypted: envelope,
         interval: safeInterval,
       });
-      // Remove legacy raw pat if it exists
       await chrome.storage.local.remove("pat");
       setupAlarm(safeInterval);
       return { ok: true, username };
@@ -167,7 +223,6 @@ async function handleSaveSettings(settings) {
     }
   }
 
-  // No PAT change — just update interval
   await chrome.storage.local.set({ interval: safeInterval });
   setupAlarm(safeInterval);
   return { ok: true };
@@ -178,18 +233,105 @@ async function handleGetStatus() {
     "patEncrypted",
     "interval",
     "lastPoll",
-    "lastError",
-    "prCount",
   ]);
   const pat = await getStoredPat();
+  const groups = await getGroups();
   return {
     hasPat: !!pat,
     patMasked: pat ? maskPat(pat) : null,
     interval: data.interval,
     lastPoll: data.lastPoll,
-    lastError: data.lastError,
-    prCount: data.prCount,
+    groups: groups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      color: g.color,
+      prCount: g.prCount ?? 0,
+      lastError: g.lastError ?? null,
+    })),
   };
+}
+
+async function handleSaveGroups(incoming) {
+  if (!Array.isArray(incoming) || incoming.length === 0) {
+    return { ok: false, error: "At least one group is required" };
+  }
+
+  for (const g of incoming) {
+    if (!g.name || !g.name.trim()) {
+      return { ok: false, error: "Group name cannot be empty" };
+    }
+    if (!g.query || !g.query.trim()) {
+      return { ok: false, error: "Group query cannot be empty" };
+    }
+    if (!CHROME_COLORS.includes(g.color)) {
+      return { ok: false, error: `Invalid color: ${g.color}` };
+    }
+  }
+
+  const existing = await getGroups();
+  const existingById = new Map(existing.map((g) => [g.id, g]));
+  const incomingIds = new Set(incoming.map((g) => g.id));
+
+  // Close Chrome tab groups for removed entries
+  for (const old of existing) {
+    if (!incomingIds.has(old.id) && old.chromeGroupId != null) {
+      try {
+        const allTabs = await chrome.tabs.query({});
+        const groupTabs = allTabs.filter(
+          (t) => t.groupId === old.chromeGroupId,
+        );
+        if (groupTabs.length > 0) {
+          await chrome.tabs.remove(groupTabs.map((t) => t.id));
+        }
+      } catch {
+        // group already gone
+      }
+    }
+  }
+
+  // Build new groups array, merging runtime state for surviving entries
+  const newGroups = incoming.map((g) => {
+    const prev = existingById.get(g.id);
+    return {
+      id: g.id,
+      name: g.name.trim(),
+      color: g.color,
+      query: g.query.trim(),
+      chromeGroupId: prev ? prev.chromeGroupId : null,
+      prCount: prev ? prev.prCount : 0,
+      lastError: prev ? prev.lastError : null,
+    };
+  });
+
+  await saveGroups(newGroups);
+  return { ok: true };
+}
+
+async function handleDeleteGroup(groupId) {
+  if (!groupId) return { ok: false, error: "Missing group ID" };
+
+  const groups = await getGroups();
+  const target = groups.find((g) => g.id === groupId);
+  if (!target) return { ok: false, error: "Group not found" };
+
+  // Close its Chrome tab group
+  if (target.chromeGroupId != null) {
+    try {
+      const allTabs = await chrome.tabs.query({});
+      const groupTabs = allTabs.filter(
+        (t) => t.groupId === target.chromeGroupId,
+      );
+      if (groupTabs.length > 0) {
+        await chrome.tabs.remove(groupTabs.map((t) => t.id));
+      }
+    } catch {
+      // group already gone
+    }
+  }
+
+  const remaining = groups.filter((g) => g.id !== groupId);
+  await saveGroups(remaining);
+  return { ok: true };
 }
 
 // --- Alarm ---
@@ -214,32 +356,46 @@ async function pollAndReconcile() {
     return;
   }
 
-  let prs;
-  try {
-    prs = await fetchReviewRequests(pat);
-  } catch (err) {
-    await chrome.storage.local.set({
-      lastError: err.message,
-      lastPoll: Date.now(),
-    });
+  const groups = await getGroups();
+  if (groups.length === 0) {
+    updateBadge("");
+    await chrome.storage.local.set({ lastPoll: Date.now() });
     return;
   }
 
-  backoffUntil = 0;
+  let totalPrCount = 0;
+  let rateLimited = false;
 
-  await chrome.storage.local.set({
-    lastError: null,
-    lastPoll: Date.now(),
-    prCount: prs.length,
-  });
+  for (const group of groups) {
+    if (rateLimited) {
+      group.lastError = "Skipped — rate limited";
+      continue;
+    }
 
-  await reconcileTabs(prs);
-  updateBadge(prs.length > 0 ? String(prs.length) : "");
+    try {
+      const prs = await fetchPRsForQuery(pat, group.query);
+      group.prCount = prs.length;
+      group.lastError = null;
+      totalPrCount += prs.length;
+
+      const updatedChromeGroupId = await reconcileTabsForGroup(prs, group);
+      group.chromeGroupId = updatedChromeGroupId;
+    } catch (err) {
+      group.lastError = err.message;
+      if (err.message.includes("Rate limited")) {
+        rateLimited = true;
+      }
+    }
+  }
+
+  await saveGroups(groups);
+  await chrome.storage.local.set({ lastPoll: Date.now() });
+  updateBadge(totalPrCount > 0 ? String(totalPrCount) : "");
 }
 
-async function fetchReviewRequests(pat) {
-  const url =
-    "https://api.github.com/search/issues?q=is:pr+is:open+review-requested:@me&per_page=50";
+async function fetchPRsForQuery(pat, query) {
+  const encoded = encodeURIComponent(query);
+  const url = `https://api.github.com/search/issues?q=${encoded}&per_page=50`;
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${pat}`,
@@ -282,10 +438,63 @@ function normalizeUrl(url) {
 
 // --- Tab reconciliation ---
 
-async function reconcileTabs(prs) {
-  const groupId = await getOrCreateGroup(prs);
-  if (groupId === null) return;
+async function reconcileTabsForGroup(prs, groupConfig) {
+  if (prs.length === 0) {
+    if (groupConfig.chromeGroupId != null) {
+      try {
+        const allTabs = await chrome.tabs.query({});
+        const groupTabs = allTabs.filter(
+          (t) => t.groupId === groupConfig.chromeGroupId,
+        );
+        if (groupTabs.length > 0) {
+          await chrome.tabs.remove(groupTabs.map((t) => t.id));
+        }
+      } catch {
+        // group already gone
+      }
+    }
+    return null;
+  }
 
+  let groupId = groupConfig.chromeGroupId;
+
+  // Validate existing group
+  if (groupId != null) {
+    try {
+      await chrome.tabGroups.get(groupId);
+    } catch {
+      groupId = null;
+    }
+  }
+
+  // Need to create a new group
+  if (groupId == null) {
+    const firstTab = await chrome.tabs.create({
+      url: prs[0].url,
+      active: false,
+    });
+    groupId = await chrome.tabs.group({ tabIds: [firstTab.id] });
+    await chrome.tabGroups.update(groupId, {
+      title: groupConfig.name,
+      color: groupConfig.color,
+    });
+
+    if (prs.length > 1) {
+      const moreTabIds = [];
+      for (let i = 1; i < prs.length; i++) {
+        const tab = await chrome.tabs.create({
+          url: prs[i].url,
+          active: false,
+        });
+        moreTabIds.push(tab.id);
+      }
+      await chrome.tabs.group({ tabIds: moreTabIds, groupId });
+    }
+
+    return groupId;
+  }
+
+  // Existing group — reconcile tabs
   const prUrls = new Set(prs.map((pr) => pr.url));
 
   const allTabs = await chrome.tabs.query({});
@@ -315,61 +524,18 @@ async function reconcileTabs(prs) {
     }
     await chrome.tabs.group({ tabIds: newTabIds, groupId });
   }
-}
 
-async function getOrCreateGroup(prs) {
-  if (prs.length === 0) {
-    const { groupId } = await chrome.storage.local.get("groupId");
-    if (groupId != null) {
-      try {
-        const allTabs = await chrome.tabs.query({});
-        const groupTabs = allTabs.filter((t) => t.groupId === groupId);
-        if (groupTabs.length > 0) {
-          await chrome.tabs.remove(groupTabs.map((t) => t.id));
-        }
-      } catch {
-        // group already gone
-      }
-      await chrome.storage.local.remove("groupId");
-    }
-    return null;
+  // Ensure group title/color are up to date
+  try {
+    await chrome.tabGroups.update(groupId, {
+      title: groupConfig.name,
+      color: groupConfig.color,
+    });
+  } catch {
+    // group may have been closed if all tabs were removed
   }
 
-  const { groupId } = await chrome.storage.local.get("groupId");
-
-  if (groupId != null) {
-    try {
-      await chrome.tabGroups.get(groupId);
-      return groupId;
-    } catch {
-      // Group was closed/invalid, will recreate
-    }
-  }
-
-  const firstTab = await chrome.tabs.create({
-    url: prs[0].url,
-    active: false,
-  });
-  const newGroupId = await chrome.tabs.group({ tabIds: [firstTab.id] });
-  await chrome.tabGroups.update(newGroupId, {
-    title: GROUP_TITLE,
-    color: GROUP_COLOR,
-  });
-
-  if (prs.length > 1) {
-    const moreTabIds = [];
-    for (let i = 1; i < prs.length; i++) {
-      const tab = await chrome.tabs.create({
-        url: prs[i].url,
-        active: false,
-      });
-      moreTabIds.push(tab.id);
-    }
-    await chrome.tabs.group({ tabIds: moreTabIds, groupId: newGroupId });
-  }
-
-  await chrome.storage.local.set({ groupId: newGroupId });
-  return null;
+  return groupId;
 }
 
 function updateBadge(text) {

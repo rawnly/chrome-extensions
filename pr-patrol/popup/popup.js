@@ -1,57 +1,67 @@
-const patInput = document.getElementById("pat");
-const intervalSelect = document.getElementById("interval");
-const saveBtn = document.getElementById("save-btn");
 const pollBtn = document.getElementById("poll-btn");
-const prCountEl = document.getElementById("pr-count");
 const lastPollEl = document.getElementById("last-poll");
 const errorEl = document.getElementById("error");
+const groupsList = document.getElementById("groups-list");
+const gearBtn = document.getElementById("gear-btn");
 
-// Load current state
-chrome.runtime.sendMessage({ type: "get-status" }, (data) => {
-  if (!data) return;
-  if (data.hasPat) patInput.placeholder = data.patMasked || "••••••••";
-  if (data.interval) intervalSelect.value = String(data.interval);
-  if (data.prCount != null) prCountEl.textContent = data.prCount;
-  if (data.lastPoll) lastPollEl.textContent = formatTime(data.lastPoll);
-  if (data.lastError) {
-    errorEl.textContent = data.lastError;
-    errorEl.hidden = false;
+function renderGroups(groups) {
+  groupsList.textContent = "";
+
+  if (!groups || groups.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No groups configured";
+    groupsList.appendChild(empty);
+    return;
   }
-});
 
-saveBtn.addEventListener("click", () => {
-  const pat = patInput.value.trim();
-  const interval = Number(intervalSelect.value);
+  for (const group of groups) {
+    const row = document.createElement("div");
+    row.className = "group-row";
 
-  saveBtn.disabled = true;
-  saveBtn.textContent = pat ? "Validating..." : "Saving...";
-  errorEl.hidden = true;
+    const dot = document.createElement("span");
+    dot.className = `color-dot color-dot--${group.color}`;
+    row.appendChild(dot);
 
-  chrome.runtime.sendMessage(
-    { type: "save-settings", settings: { pat, interval } },
-    (res) => {
-      saveBtn.disabled = false;
-      if (!res) {
-        saveBtn.textContent = "Save";
-        return;
-      }
-      if (res.ok) {
-        const label = res.username
-          ? `Saved! (@${res.username})`
-          : "Saved!";
-        saveBtn.textContent = label;
-        if (pat) {
-          patInput.value = "";
-          patInput.placeholder = pat.slice(0, 4) + "••••" + pat.slice(-4);
-        }
-        setTimeout(() => (saveBtn.textContent = "Save"), 2000);
-      } else {
-        saveBtn.textContent = "Save";
-        errorEl.textContent = res.error;
-        errorEl.hidden = false;
-      }
+    const name = document.createElement("span");
+    name.className = "group-name";
+    name.textContent = group.name;
+    row.appendChild(name);
+
+    const count = document.createElement("span");
+    count.className = "group-count";
+    count.textContent = group.prCount ?? 0;
+    row.appendChild(count);
+
+    groupsList.appendChild(row);
+
+    if (group.lastError) {
+      const err = document.createElement("div");
+      err.className = "group-error";
+      err.textContent = group.lastError;
+      groupsList.appendChild(err);
     }
-  );
+  }
+}
+
+function loadStatus() {
+  chrome.runtime.sendMessage({ type: "get-status" }, (data) => {
+    if (!data) return;
+    renderGroups(data.groups);
+    if (data.lastPoll) lastPollEl.textContent = formatTime(data.lastPoll);
+    if (!data.hasPat) {
+      errorEl.textContent = "No PAT configured — open Settings";
+      errorEl.hidden = false;
+    } else {
+      errorEl.hidden = true;
+    }
+  });
+}
+
+loadStatus();
+
+gearBtn.addEventListener("click", () => {
+  chrome.runtime.openOptionsPage();
 });
 
 pollBtn.addEventListener("click", () => {
@@ -60,17 +70,7 @@ pollBtn.addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "poll-now" }, () => {
     pollBtn.disabled = false;
     pollBtn.textContent = "Poll Now";
-    chrome.runtime.sendMessage({ type: "get-status" }, (data) => {
-      if (!data) return;
-      if (data.prCount != null) prCountEl.textContent = data.prCount;
-      if (data.lastPoll) lastPollEl.textContent = formatTime(data.lastPoll);
-      if (data.lastError) {
-        errorEl.textContent = data.lastError;
-        errorEl.hidden = false;
-      } else {
-        errorEl.hidden = true;
-      }
-    });
+    loadStatus();
   });
 });
 
