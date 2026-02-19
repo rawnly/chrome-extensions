@@ -117,6 +117,18 @@ async function saveGroups(groups) {
   await chrome.storage.local.set({ groups });
 }
 
+async function resetDismissed() {
+  const groups = await getGroups();
+  let changed = false;
+  for (const g of groups) {
+    if (g.dismissed) {
+      g.dismissed = false;
+      changed = true;
+    }
+  }
+  if (changed) await saveGroups(groups);
+}
+
 // --- Migration ---
 
 async function migrateStorage() {
@@ -170,7 +182,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "poll-now") {
-    pollAndReconcile().then(() => sendResponse({ ok: true }));
+    // User explicitly requested a poll — reset dismissed state so
+    // groups are recreated if they have PRs
+    resetDismissed().then(() =>
+      pollAndReconcile().then(() => sendResponse({ ok: true })),
+    );
     return true;
   }
 
@@ -289,21 +305,59 @@ async function handleSaveGroups(incoming) {
     }
   }
 
+  // Determine which groups need a fresh poll:
+  // - new groups (no previous entry)
+  // - groups whose query changed
+  const dirtyIds = new Set();
+  for (const g of incoming) {
+    const prev = existingById.get(g.id);
+    if (!prev || prev.query !== g.query.trim()) {
+      dirtyIds.add(g.id);
+    }
+  }
+
   // Build new groups array, merging runtime state for surviving entries
   const newGroups = incoming.map((g) => {
     const prev = existingById.get(g.id);
+    const queryChanged = !prev || prev.query !== g.query.trim();
     return {
       id: g.id,
       name: g.name.trim(),
       color: g.color,
       query: g.query.trim(),
-      chromeGroupId: prev ? prev.chromeGroupId : null,
-      prCount: prev ? prev.prCount : 0,
-      lastError: prev ? prev.lastError : null,
+      // Reset chromeGroupId if query changed — old tabs are stale
+      chromeGroupId: queryChanged ? null : (prev ? prev.chromeGroupId : null),
+      prCount: queryChanged ? 0 : (prev ? prev.prCount : 0),
+      lastError: queryChanged ? null : (prev ? prev.lastError : null),
+      dismissed: false,
     };
   });
 
   await saveGroups(newGroups);
+
+  // Close stale Chrome tab groups for groups whose query changed
+  for (const g of incoming) {
+    const prev = existingById.get(g.id);
+    if (prev && prev.query !== g.query.trim() && prev.chromeGroupId != null) {
+      try {
+        const allTabs = await chrome.tabs.query({});
+        const groupTabs = allTabs.filter(
+          (t) => t.groupId === prev.chromeGroupId,
+        );
+        if (groupTabs.length > 0) {
+          await chrome.tabs.remove(groupTabs.map((t) => t.id));
+        }
+      } catch {
+        // group already gone
+      }
+    }
+  }
+
+  // Poll only the changed/new groups in the background
+  if (dirtyIds.size > 0) {
+    pollAndReconcile(dirtyIds);
+  }
+
   return { ok: true };
 }
 
@@ -347,7 +401,9 @@ async function setupAlarm(interval) {
 
 // --- Polling ---
 
-async function pollAndReconcile() {
+// onlyGroupIds: optional Set of group IDs to poll.
+// If null/undefined, polls all groups.
+async function pollAndReconcile(onlyGroupIds) {
   if (Date.now() < backoffUntil) return;
 
   const pat = await getStoredPat();
@@ -363,10 +419,12 @@ async function pollAndReconcile() {
     return;
   }
 
-  let totalPrCount = 0;
   let rateLimited = false;
 
   for (const group of groups) {
+    // Skip groups not in the filter (if a filter is set)
+    if (onlyGroupIds && !onlyGroupIds.has(group.id)) continue;
+
     if (rateLimited) {
       group.lastError = "Skipped — rate limited";
       continue;
@@ -376,7 +434,6 @@ async function pollAndReconcile() {
       const prs = await fetchPRsForQuery(pat, group.query);
       group.prCount = prs.length;
       group.lastError = null;
-      totalPrCount += prs.length;
 
       const updatedChromeGroupId = await reconcileTabsForGroup(prs, group);
       group.chromeGroupId = updatedChromeGroupId;
@@ -387,6 +444,9 @@ async function pollAndReconcile() {
       }
     }
   }
+
+  // Badge always reflects total across ALL groups
+  const totalPrCount = groups.reduce((sum, g) => sum + (g.prCount ?? 0), 0);
 
   await saveGroups(groups);
   await chrome.storage.local.set({ lastPoll: Date.now() });
@@ -438,7 +498,20 @@ function normalizeUrl(url) {
 
 // --- Tab reconciliation ---
 
+async function getLastFocusedWindowId() {
+  try {
+    const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+    return win.id;
+  } catch {
+    const allWindows = await chrome.windows.getAll({ windowTypes: ["normal"] });
+    return allWindows.length > 0 ? allWindows[0].id : undefined;
+  }
+}
+
 async function reconcileTabsForGroup(prs, groupConfig) {
+  const prUrls = new Set(prs.map((pr) => pr.url));
+
+  // --- No PRs: tear down any existing group ---
   if (prs.length === 0) {
     if (groupConfig.chromeGroupId != null) {
       try {
@@ -456,22 +529,51 @@ async function reconcileTabsForGroup(prs, groupConfig) {
     return null;
   }
 
+  // --- Check if Chrome group still exists ---
   let groupId = groupConfig.chromeGroupId;
+  let groupWindowId = null;
 
-  // Validate existing group
   if (groupId != null) {
     try {
-      await chrome.tabGroups.get(groupId);
+      const tabGroup = await chrome.tabGroups.get(groupId);
+      groupWindowId = tabGroup.windowId;
+      // Track which window the group lives in
+      groupConfig.windowId = groupWindowId;
     } catch {
+      // Group is gone — check if its window still exists to decide
+      // whether the user intentionally dismissed the group or the
+      // whole window was closed (Chrome restart, window close, etc.)
       groupId = null;
+      if (groupConfig.windowId != null) {
+        let windowGone = false;
+        try {
+          await chrome.windows.get(groupConfig.windowId);
+        } catch {
+          windowGone = true;
+        }
+        if (!windowGone) {
+          // Window still exists but group is gone — user dismissed it
+          groupConfig.dismissed = true;
+        }
+      }
+      // If windowId was never recorded or window is gone, don't
+      // mark dismissed — safe default is to recreate
+      groupConfig.windowId = null;
     }
   }
 
-  // Need to create a new group
+  // --- Group was dismissed by user: don't recreate ---
+  if (groupId == null && groupConfig.dismissed) {
+    return null;
+  }
+
+  // --- Need to create a new group (first time or after re-enable) ---
   if (groupId == null) {
+    const windowId = await getLastFocusedWindowId();
     const firstTab = await chrome.tabs.create({
       url: prs[0].url,
       active: false,
+      windowId,
     });
     groupId = await chrome.tabs.group({ tabIds: [firstTab.id] });
     await chrome.tabGroups.update(groupId, {
@@ -485,6 +587,7 @@ async function reconcileTabsForGroup(prs, groupConfig) {
         const tab = await chrome.tabs.create({
           url: prs[i].url,
           active: false,
+          windowId,
         });
         moreTabIds.push(tab.id);
       }
@@ -494,16 +597,15 @@ async function reconcileTabsForGroup(prs, groupConfig) {
     return groupId;
   }
 
-  // Existing group — reconcile tabs
-  const prUrls = new Set(prs.map((pr) => pr.url));
-
-  const allTabs = await chrome.tabs.query({});
+  // --- Group exists: full reconcile within its window ---
+  const allTabs = await chrome.tabs.query({ windowId: groupWindowId });
   const groupTabs = allTabs.filter((t) => t.groupId === groupId);
   const groupUrls = new Map();
   for (const tab of groupTabs) {
     groupUrls.set(normalizeUrl(tab.url || ""), tab.id);
   }
 
+  // Close tabs for PRs no longer in the list
   const toClose = [];
   for (const [url, tabId] of groupUrls) {
     if (!prUrls.has(url)) {
@@ -511,21 +613,34 @@ async function reconcileTabsForGroup(prs, groupConfig) {
     }
   }
   if (toClose.length > 0) {
-    await chrome.tabs.remove(toClose);
+    try {
+      await chrome.tabs.remove(toClose);
+    } catch {
+      // tabs may have been closed by the user in the meantime
+    }
   }
 
+  // Open tabs for new PRs in the same window
   const existingUrls = new Set(groupUrls.keys());
   const toOpen = prs.filter((pr) => !existingUrls.has(pr.url));
   if (toOpen.length > 0) {
-    const newTabIds = [];
-    for (const pr of toOpen) {
-      const tab = await chrome.tabs.create({ url: pr.url, active: false });
-      newTabIds.push(tab.id);
+    try {
+      const newTabIds = [];
+      for (const pr of toOpen) {
+        const tab = await chrome.tabs.create({
+          url: pr.url,
+          active: false,
+          windowId: groupWindowId,
+        });
+        newTabIds.push(tab.id);
+      }
+      await chrome.tabs.group({ tabIds: newTabIds, groupId });
+    } catch {
+      // window or group may have been closed during reconciliation
     }
-    await chrome.tabs.group({ tabIds: newTabIds, groupId });
   }
 
-  // Ensure group title/color are up to date
+  // Keep group title/color in sync
   try {
     await chrome.tabGroups.update(groupId, {
       title: groupConfig.name,
