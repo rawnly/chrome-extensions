@@ -6,8 +6,9 @@
   border: 2px solid #3b82f6;
   background: rgba(59, 130, 246, 0.08);
   z-index: 2147483647;
-  transition: top 0.05s ease, left 0.05s ease, width 0.05s ease, height 0.05s ease;
-  border-radius: 2px;
+  transition: top 0.08s ease-out, left 0.08s ease-out, width 0.08s ease-out, height 0.08s ease-out;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.15);
 }
 
 .cw-overlay-label {
@@ -16,14 +17,15 @@
   left: -2px;
   background: #3b82f6;
   color: #fff;
-  font: 11px/1.4 system-ui, -apple-system, sans-serif;
-  padding: 2px 6px;
-  border-radius: 3px 3px 0 0;
+  font: 500 11px/1.4 system-ui, -apple-system, sans-serif;
+  padding: 2px 8px;
+  border-radius: 4px 4px 0 0;
   white-space: nowrap;
   pointer-events: none;
   max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
+  box-shadow: 0 -1px 4px rgba(59, 130, 246, 0.15);
 }
 
 .cw-toast {
@@ -31,16 +33,18 @@
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%) translateY(0);
-  background: #1e293b;
+  background: #0f172a;
   color: #f1f5f9;
   font: 13px/1.4 system-ui, -apple-system, sans-serif;
-  padding: 8px 16px;
-  border-radius: 8px;
+  padding: 10px 18px;
+  border-radius: 10px;
   z-index: 2147483647;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease, transform 0.2s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .cw-toast.cw-toast--visible {
